@@ -150,10 +150,10 @@ else:
     load_css('style/light_mode.css')
 
 # --- Utility Functions ---
-def get_ollama_response(messages):
+def get_ollama_response(messages, extra_body=None):
     """Retrieves a response from the Ollama GPT-OSS model."""
     try:
-        chat_model = ChatOllama(model=MODEL_NAME)
+        chat_model = ChatOllama(model=MODEL_NAME, extra_body={})
         response = chat_model.invoke(messages)
         return response.content
     except Exception as e:
@@ -478,23 +478,28 @@ if user_input:
                 language_instruction = "Respond in Traditional Chinese."
             system_prompt += f" {language_instruction}"
 
-            if st.session_state.reasoning_effort == "low":
-                system_prompt += " Be concise and to the point. {reasoning_effort = low}"
-            elif st.session_state.reasoning_effort == "medium":
-                system_prompt += " Provide a balanced and clear answer. {reasoning_effort = medium}"
-            elif st.session_state.reasoning_effort == "high":
-                system_prompt += " Provide a detailed and thorough answer, exploring all relevant aspects. {reasoning_effort = high}"
+            # if st.session_state.reasoning_effort == "low":
+            #     system_prompt += " Be concise and to the point."
+            # elif st.session_state.reasoning_effort == "medium":
+            #     system_prompt += " Provide a balanced and clear answer."
+            # elif st.session_state.reasoning_effort == "high":
+            #     system_prompt += " Provide a detailed and thorough answer, exploring all relevant aspects."
             
             if st.session_state.show_cot:
                 if st.session_state.selected_language == "zh-tw":
                     system_prompt += "\n\n請先以 '思考過程：' 開頭解釋你的推理和思考流程，然後再以 '最終答案：' 開頭給出最終答案。"
                 else:
                     system_prompt += "\n\nFirst, explain your reasoning and thought process starting with 'Thought:'. Then, provide your final answer starting with 'Answer:'."
+
+            # Prepare the extra_body dictionary
+            extra_body = {
+                "reasoning_effort": st.session_state.reasoning_effort
+            }
             
             prompt = [SystemMessage(content=system_prompt)]
             prompt.extend(st.session_state.chat_history[-st.session_state.history_length:])
 
-            response = get_ollama_response(prompt)
+            response = get_ollama_response(prompt, extra_body=extra_body)
             st.write(response)
             
             st.session_state.chat_history.append(
