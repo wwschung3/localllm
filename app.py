@@ -20,6 +20,7 @@ import os
 CONFIG_FILE = "config.json"
 CONVERSATIONS_FILE = "conversations.json"
 MODEL_NAME = "gpt-oss:20b"
+USE_STREAM = True
 
 # --- Page Configuration and CSS Injection ---
 st.set_page_config(
@@ -46,6 +47,7 @@ def load_config():
             config.setdefault("show_cot", False)
             config.setdefault("dark_mode", True)
             config.setdefault("history_length", 5)
+            config.setdefault("auto_save", True)
             config.setdefault("profiles", {
                 "Default": "You are a helpful AI assistant.",
                 "Technical Assistant": "You are a highly detailed and technical assistant, specializing in programming and systems administration. Provide code examples and clear explanations.",
@@ -59,6 +61,7 @@ def load_config():
         "show_cot": False,
         "dark_mode": True,
         "history_length": 5,
+        "auto_save": True,
         "profiles": {
             "Default": "You are a helpful AI assistant.",
             "Technical Assistant": "You are a highly detailed and technical assistant, specializing in programming and systems administration. Provide code examples and clear explanations.",
@@ -74,6 +77,7 @@ def save_config():
         "reasoning_effort": st.session_state.reasoning_effort,
         "show_cot": st.session_state.show_cot,
         "dark_mode": st.session_state.dark_mode,
+        "auto_save": st.session_state.auto_save,
         "history_length": st.session_state.history_length,
         "profiles": st.session_state.profiles,
     }
@@ -139,9 +143,10 @@ if "rename_mode" not in st.session_state:
     st.session_state.rename_mode = False
 if "conversation_to_rename" not in st.session_state:
     st.session_state.conversation_to_rename = ""
-# New state variable to track the currently loaded conversation
 if "current_conversation_title" not in st.session_state:
     st.session_state.current_conversation_title = None
+if "auto_save" not in st.session_state:
+    st.session_state.auto_save = config["auto_save"]
 
 
 if st.session_state.dark_mode:
@@ -163,6 +168,44 @@ def get_ollama_response(messages, extra_body=None):
             "You can start it with: `ollama run gpt-oss`"
         )
         return "An error occurred while generating the response."
+
+
+def get_ollama_stream(messages, extra_body=None):
+    """
+    Streams a response from an Ollama chat model, yielding only the text content.
+
+    This function filters out any debug or metadata content and handles potential errors gracefully.
+
+    Args:
+        messages: A list of messages for the chat model.
+        model_name: The name of the Ollama model to use.
+        extra_body: An optional dictionary for additional parameters to pass to the API.
+
+    Yields:
+        str: The text content of each chunk from the model's response.
+    """
+    if extra_body is None:
+        extra_body = {}
+
+    try:
+        # Use a dictionary to define the parameters to avoid errors
+        # with passing extra_body. The double-splat (**) unpacks the dictionary.
+        chat_model = ChatOllama(model=MODEL_NAME, **extra_body)
+        stream = chat_model.stream(messages)
+
+        # The stream object itself will yield chunks.
+        # It's more idiomatic to check the type and content directly.
+        for chunk in stream:
+            # LangChain's stream method typically yields BaseMessage objects or similar.
+            # We want to access the content attribute.
+            if hasattr(chunk, "content") and chunk.content:
+                yield chunk.content
+
+    except Exception as e:
+        # Log the full exception for debugging but show a user-friendly message.
+        st.error(f"Error streaming from Ollama: {e}")
+        # Yield a string to the caller so they don't get stuck waiting for a response.
+        yield "An error occurred while streaming the response."
 
 def generate_conversation_title(history):
     """Generates a concise title for a conversation based on its first few turns."""
@@ -322,6 +365,13 @@ with st.sidebar:
                     st.rerun()
 
     st.markdown("---")
+    
+    auto_save_checked = st.sidebar.checkbox(
+        "Auto‑Save conversations", value=st.session_state.auto_save, key="auto_save_checkbox"
+    )
+    if auto_save_checked != st.session_state.auto_save:
+        st.session_state.auto_save = auto_save_checked
+        save_config()
 
     st.subheader("Previous Conversations")
     
@@ -499,9 +549,31 @@ if user_input:
             prompt = [SystemMessage(content=system_prompt)]
             prompt.extend(st.session_state.chat_history[-st.session_state.history_length:])
 
-            response = get_ollama_response(prompt, extra_body=extra_body)
-            st.write(response)
+            # -------- non stream response ----------
+            if not USE_STREAM:
+                response = get_ollama_response(prompt, extra_body=extra_body)
+                st.write(response)
+                
+                st.session_state.chat_history.append(
+                    AIMessage(content=response)
+                )
             
-            st.session_state.chat_history.append(
-                AIMessage(content=response)
-            )
+            # -------- 開始串流 ----------
+            else:
+                # Create a placeholder for the response text.
+                # This tells Streamlit where to put the streaming content.
+                response_placeholder = st.empty()
+                full_text = ""
+
+                # The loop now accumulates the text and updates the placeholder.
+                for token in get_ollama_stream(prompt, extra_body=extra_body):
+                    full_text += token
+                    # Update the content of the placeholder with the new full_text.
+                    # This overwrites the previous content instead of appending a new block.
+                    response_placeholder.write(full_text)
+
+                # After the loop is finished, store the final full text.
+                st.session_state.chat_history.append(AIMessage(content=full_text))
+            
+            if st.session_state.auto_save:
+                save_current_conversation()
