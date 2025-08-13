@@ -466,6 +466,9 @@ for msg in st.session_state.chat_history:
 user_input = st.chat_input("You:")
 if user_input:
     st.session_state.chat_history.append(HumanMessage(content=user_input))
+    # Immediately display the latest user's prompt
+    st.chat_message("user").write(user_input)
+
     with st.chat_message("assistant"):
         with st.spinner("思考中…"):
             system_prompt = st.session_state.system_prompt
@@ -476,11 +479,11 @@ if user_input:
             system_prompt += f" {language_instruction}"
 
             if st.session_state.reasoning_effort == "low":
-                system_prompt += " Be concise and to the point."
-            elif st.session_effort == "medium":
-                system_prompt += " Provide a balanced and clear answer."
+                system_prompt += " Be concise and to the point. {reasoning_effort = low}"
+            elif st.session_state.reasoning_effort == "medium":
+                system_prompt += " Provide a balanced and clear answer. {reasoning_effort = medium}"
             elif st.session_state.reasoning_effort == "high":
-                system_prompt += " Provide a detailed and thorough answer, exploring all relevant aspects."
+                system_prompt += " Provide a detailed and thorough answer, exploring all relevant aspects. {reasoning_effort = high}"
             
             if st.session_state.show_cot:
                 if st.session_state.selected_language == "zh-tw":
