@@ -454,7 +454,7 @@ with st.sidebar:
 
 
 # --- Main Content Area ---
-st.title("Local LLM Chat")
+st.title("Private AI Playground")
 st.caption("Model: " + MODEL_NAME)
 
 for msg in st.session_state.chat_history:
