@@ -1,14 +1,3 @@
-# app.py
-# requirements.txt content:
-# streamlit
-# langchain-community
-# chromadb
-# sentence-transformers
-# transformers
-# torch
-# langchain_huggingface
-# ollama
-
 import streamlit as st
 import ollama
 from langchain_community.chat_models import ChatOllama
@@ -147,7 +136,8 @@ if "current_conversation_title" not in st.session_state:
     st.session_state.current_conversation_title = None
 if "auto_save" not in st.session_state:
     st.session_state.auto_save = config["auto_save"]
-
+if "uploaded_file_content" not in st.session_state:
+    st.session_state.uploaded_file_content = None
 
 if st.session_state.dark_mode:
     load_css('style/dark_mode.css')
@@ -169,42 +159,21 @@ def get_ollama_response(messages, extra_body=None):
         )
         return "An error occurred while generating the response."
 
-
 def get_ollama_stream(messages, extra_body=None):
     """
     Streams a response from an Ollama chat model, yielding only the text content.
-
-    This function filters out any debug or metadata content and handles potential errors gracefully.
-
-    Args:
-        messages: A list of messages for the chat model.
-        model_name: The name of the Ollama model to use.
-        extra_body: An optional dictionary for additional parameters to pass to the API.
-
-    Yields:
-        str: The text content of each chunk from the model's response.
     """
     if extra_body is None:
         extra_body = {}
 
     try:
-        # Use a dictionary to define the parameters to avoid errors
-        # with passing extra_body. The double-splat (**) unpacks the dictionary.
         chat_model = ChatOllama(model=MODEL_NAME, **extra_body)
         stream = chat_model.stream(messages)
-
-        # The stream object itself will yield chunks.
-        # It's more idiomatic to check the type and content directly.
         for chunk in stream:
-            # LangChain's stream method typically yields BaseMessage objects or similar.
-            # We want to access the content attribute.
             if hasattr(chunk, "content") and chunk.content:
                 yield chunk.content
-
     except Exception as e:
-        # Log the full exception for debugging but show a user-friendly message.
         st.error(f"Error streaming from Ollama: {e}")
-        # Yield a string to the caller so they don't get stuck waiting for a response.
         yield "An error occurred while streaming the response."
 
 def generate_conversation_title(history):
@@ -249,15 +218,13 @@ def save_current_conversation():
         return
 
     if st.session_state.current_conversation_title:
-        # Overwrite the existing conversation
         title_to_save = st.session_state.current_conversation_title
         st.session_state.conversation_titles[title_to_save] = list(st.session_state.chat_history)
         st.toast(f"Conversation '{title_to_save}' updated!")
     else:
-        # Create a new conversation
         title = generate_conversation_title(st.session_state.chat_history)
         st.session_state.conversation_titles[title] = list(st.session_state.chat_history)
-        st.session_state.current_conversation_title = title # Set the new title as the current one
+        st.session_state.current_conversation_title = title
         st.toast(f"Conversation '{title}' saved!")
     
     save_conversations()
@@ -269,7 +236,7 @@ def load_conversation(title):
         st.session_state.chat_history = list(
             st.session_state.conversation_titles[title]
         )
-        st.session_state.current_conversation_title = title # Update the current conversation title
+        st.session_state.current_conversation_title = title
         st.toast(f"Conversation '{title}' loaded!")
         st.rerun()
 
@@ -277,11 +244,8 @@ def rename_conversation_handler(old_title, new_title):
     """Renames a saved conversation."""
     if old_title != new_title and new_title not in st.session_state.conversation_titles:
         st.session_state.conversation_titles[new_title] = st.session_state.conversation_titles.pop(old_title)
-        
-        # If the renamed conversation was the currently loaded one, update the tracker
         if st.session_state.current_conversation_title == old_title:
             st.session_state.current_conversation_title = new_title
-            
         save_conversations()
         st.session_state.rename_mode = False
         st.toast(f"Conversation '{old_title}' renamed to '{new_title}'!")
@@ -295,12 +259,9 @@ def delete_conversation(title):
     """Deletes a saved conversation."""
     if title in st.session_state.conversation_titles:
         del st.session_state.conversation_titles[title]
-
-        # If the deleted conversation was the currently loaded one, clear the tracker
         if st.session_state.current_conversation_title == title:
             st.session_state.chat_history = []
             st.session_state.current_conversation_title = None
-
         save_conversations()
         st.toast(f"Conversation '{title}' deleted!")
         st.rerun()
@@ -310,8 +271,22 @@ with st.sidebar:
     st.header("Configuration")
     st.markdown("---")
 
+    st.subheader("File Upload")
+    uploaded_file = st.file_uploader(
+        "Upload a text file (text file only):",
+        key="file_uploader"
+    )
+    if uploaded_file:
+        try:
+            file_content = uploaded_file.read().decode("utf-8")
+            st.session_state.uploaded_file_content = file_content
+            st.success(f"File '{uploaded_file.name}' uploaded successfully!")
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
+
+    st.markdown("---")
+
     st.subheader("System Prompt Profiles")
-    
     if st.button("New Profile", use_container_width=True, key="new_profile_btn"):
         st.session_state.selected_profile_name = "New Profile"
         st.session_state.system_prompt = "You are a helpful AI assistant."
@@ -319,7 +294,6 @@ with st.sidebar:
 
     if st.session_state.profiles:
         profile_names = list(st.session_state.profiles.keys())
-        
         for profile_name in profile_names:
             if st.button(profile_name, key=f"profile_button_{profile_name}", use_container_width=True):
                 st.session_state.selected_profile_name = profile_name
@@ -333,14 +307,12 @@ with st.sidebar:
         st.session_state.selected_profile_name,
         key="profile_name_input"
     )
-
     current_system_prompt = st.text_area(
         "Define the AI's persona or instructions:",
         st.session_state.system_prompt,
         height=150,
         key="system_prompt_input"
     )
-
     col_actions = st.columns(2)
     with col_actions[0]:
         if st.button("Save Profile", use_container_width=True, key="save_profile_btn"):
@@ -374,7 +346,6 @@ with st.sidebar:
         save_config()
 
     st.subheader("Previous Conversations")
-    
     col_save, col_new = st.columns(2)
     with col_save:
         if st.button("Save Current", key="save_conv_btn", use_container_width=True):
@@ -383,9 +354,9 @@ with st.sidebar:
         if st.button("New Chat", key="new_chat_btn", use_container_width=True):
             st.session_state.chat_history = []
             st.session_state.current_conversation_title = None
+            st.session_state.uploaded_file_content = None
             st.rerun()
 
-    # Rename modal functionality
     if st.session_state.rename_mode:
         with st.form("rename_form", clear_on_submit=False):
             st.write(f"Rename conversation: **{st.session_state.conversation_to_rename}**")
@@ -403,22 +374,17 @@ with st.sidebar:
     if st.session_state.conversation_titles:
         for title in st.session_state.conversation_titles:
             is_active = (title == st.session_state.current_conversation_title)
-            
             with st.container():
                 st.markdown(f"**{'🟢 ' if is_active else ''}{title}**")
-                
                 col_load, col_rename, col_delete = st.columns(3)
-                
                 with col_load:
                     if st.button("Load", key=f"load_conv_{title}", use_container_width=True):
                         load_conversation(title)
-                
                 with col_rename:
                     if st.button("Rename", key=f"rename_btn_{title}", use_container_width=True):
                         st.session_state.rename_mode = True
                         st.session_state.conversation_to_rename = title
                         st.rerun()
-                
                 with col_delete:
                     if st.button("Delete", key=f"delete_btn_{title}", use_container_width=True):
                         delete_conversation(title)
@@ -428,6 +394,7 @@ with st.sidebar:
             st.session_state.conversation_titles = {}
             st.session_state.chat_history = []
             st.session_state.current_conversation_title = None
+            st.session_state.uploaded_file_content = None
             save_conversations()
             st.toast("All conversations cleared!")
             st.rerun()
@@ -502,7 +469,6 @@ with st.sidebar:
         st.session_state.reasoning_effort = reasoning_effort_from_ui
         save_config()
 
-
 # --- Main Content Area ---
 st.title("Private AI Playground")
 st.caption("Model: " + MODEL_NAME)
@@ -515,33 +481,30 @@ for msg in st.session_state.chat_history:
 
 user_input = st.chat_input("You:")
 if user_input:
-    st.session_state.chat_history.append(HumanMessage(content=user_input))
-    # Immediately display the latest user's prompt
-    st.chat_message("user").write(user_input)
+    # Combine user input and uploaded file content, if any
+    combined_input = user_input
+    if "uploaded_file_content" in st.session_state and st.session_state.uploaded_file_content:
+        combined_input += "\n\n[Uploaded File Content]:\n" + st.session_state.uploaded_file_content
+        # Clear the uploaded file content after use
+        st.session_state.uploaded_file_content = None
+
+    st.chat_message("user").write(combined_input)
+    st.session_state.chat_history.append(HumanMessage(content=combined_input))
 
     with st.chat_message("assistant"):
         with st.spinner("思考中…"):
             system_prompt = st.session_state.system_prompt
-            
             language_instruction = "Respond in English."
             if st.session_state.selected_language == "zh-tw":
                 language_instruction = "Respond in Traditional Chinese."
             system_prompt += f" {language_instruction}"
 
-            # if st.session_state.reasoning_effort == "low":
-            #     system_prompt += " Be concise and to the point."
-            # elif st.session_state.reasoning_effort == "medium":
-            #     system_prompt += " Provide a balanced and clear answer."
-            # elif st.session_state.reasoning_effort == "high":
-            #     system_prompt += " Provide a detailed and thorough answer, exploring all relevant aspects."
-            
             if st.session_state.show_cot:
                 if st.session_state.selected_language == "zh-tw":
                     system_prompt += "\n\n請先以 '思考過程：' 開頭解釋你的推理和思考流程，然後再以 '最終答案：' 開頭給出最終答案。"
                 else:
                     system_prompt += "\n\nFirst, explain your reasoning and thought process starting with 'Thought:'. Then, provide your final answer starting with 'Answer:'."
 
-            # Prepare the extra_body dictionary
             extra_body = {
                 "reasoning_effort": st.session_state.reasoning_effort
             }
@@ -549,30 +512,16 @@ if user_input:
             prompt = [SystemMessage(content=system_prompt)]
             prompt.extend(st.session_state.chat_history[-st.session_state.history_length:])
 
-            # -------- non stream response ----------
             if not USE_STREAM:
                 response = get_ollama_response(prompt, extra_body=extra_body)
                 st.write(response)
-                
-                st.session_state.chat_history.append(
-                    AIMessage(content=response)
-                )
-            
-            # -------- 開始串流 ----------
+                st.session_state.chat_history.append(AIMessage(content=response))
             else:
-                # Create a placeholder for the response text.
-                # This tells Streamlit where to put the streaming content.
                 response_placeholder = st.empty()
                 full_text = ""
-
-                # The loop now accumulates the text and updates the placeholder.
                 for token in get_ollama_stream(prompt, extra_body=extra_body):
                     full_text += token
-                    # Update the content of the placeholder with the new full_text.
-                    # This overwrites the previous content instead of appending a new block.
                     response_placeholder.write(full_text)
-
-                # After the loop is finished, store the final full text.
                 st.session_state.chat_history.append(AIMessage(content=full_text))
             
             if st.session_state.auto_save:
