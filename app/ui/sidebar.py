@@ -1,5 +1,29 @@
 import streamlit as st
 from utils import persistence
+import tiktoken
+
+def process_uploaded_files(uploaded_files):
+	"""Processes uploaded text files, calculates token counts, and updates session state."""
+	if not uploaded_files:
+		st.session_state.uploaded_file_data = []
+		st.session_state.file_token_counts = {}
+		return
+
+	st.session_state.uploaded_file_data = []
+	st.session_state.file_token_counts = {}
+
+	for uploaded_file in uploaded_files:
+		try:
+			file_content = uploaded_file.read().decode("utf-8")
+			tokens = st.session_state.token_encoder.encode(file_content)
+			token_count = len(tokens)
+
+			st.session_state.uploaded_file_data.append((uploaded_file.name, file_content))
+			st.session_state.file_token_counts[uploaded_file.name] = token_count
+
+			st.success(f"File '{uploaded_file.name}' uploaded successfully! Tokens: **{token_count}**")
+		except Exception as e:
+			st.error(f"Error reading file '{uploaded_file.name}': {e}")
 
 	
 def render_sidebar():
@@ -7,23 +31,20 @@ def render_sidebar():
 	st.markdown("---")
 
 	st.subheader("File Upload")
+
+	# Initialize token encoder in session state if it doesn't exist
+	if "token_encoder" not in st.session_state:
+	   	st.session_state.token_encoder = tiktoken.get_encoding("cl100k_base")
+
+	# The file uploader widget
 	uploaded_files = st.file_uploader(
-		"Upload text files (content will be used as context for the next query):",
+	    "Upload text files (content will be used as context for the next query):",
 		accept_multiple_files=True,
 		key="file_uploader"
 	)
-	if uploaded_files:
-		st.session_state.uploaded_file_data = [] # Reset the list of (filename, content)
-		for uploaded_file in uploaded_files:
-			try:
-				file_content = uploaded_file.read().decode("utf-8")
-				# Store both file name and content as a tuple
-				st.session_state.uploaded_file_data.append((uploaded_file.name, file_content))
-				st.success(f"File '{uploaded_file.name}' uploaded successfully!")
-			except Exception as e:
-				st.error(f"Error reading file '{uploaded_file.name}': {e}")
-	elif "uploaded_file_data" in st.session_state: # Clear if files are removed
-		st.session_state.uploaded_file_data = []
+
+	# Process files when the uploader state changes
+	process_uploaded_files(uploaded_files)
 
 	st.markdown("---")
 
