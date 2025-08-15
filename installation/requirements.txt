@@ -9,3 +9,4 @@ ollama
 langchain_ollama
 chromadb
 tiktoken
+pyperclip

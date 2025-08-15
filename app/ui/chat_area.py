@@ -3,51 +3,63 @@ import json
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from utils import persistence, ollama_client
 import config as default_config
+import pyperclip
 
-def _copy_button_html(text: str, idx: int, role: str) -> str:
+
+def _copy_button(text: str, idx: int) -> None:
 	"""
-	產生一段簡易的 HTML 按鈕，點擊時會將 `text` 複製到剪貼簿。
-
-	參數:
-		text: 要複製的訊息文字。
-		idx: 訊息在歷史中的索引，用於產生唯一鍵。
-		role: 訊息角色（'user' 或 'assistant'），用於鍵值命名。
-
-	回傳:
-		以 `<button>` 包起來的 HTML 片段。
+	Renders a Copy button that copies the given text to the clipboard.
+	
+	Parameters
+	----------
+	text : str
+		The content of the chat message.
+	idx : int
+		Position of the message in the chat history (used for the button key).
 	"""
-	# 先將文字 JSON-escape 以避免字元衝突
-	escaped_text = json.dumps(text)  # 這會回傳帶引號的字串
-	# 移除最外層的雙引號
-	escaped_text = escaped_text[1:-1]
-	# 產生唯一鍵
-	key = f"copy_{role}_{idx}"
-	# HTML 片段
-	return (
-		f'<button id="{key}" '
-		f'onclick="navigator.clipboard.writeText(`{escaped_text}`); '
-		f'alert(`已複製 ${role} 訊息`);" '
-		f'style="font-size:0.9rem; margin-top:4px;">Copy</button>'
-	)
+	button_key = f"copy_{idx}"
+	
+	# Use a unique session state key for each button's content
+	session_state_key = f"text_to_copy_{button_key}"
 
-def render_chatarea():
+	if st.button(label="📋 Copy", key=button_key):
+		# When the button is clicked, store the text with a unique key.
+		st.session_state[session_state_key] = text
+		st.success(f"Text copied to clipboard!")
+	
+	# Handle the actual copy action via JavaScript
+	if session_state_key in st.session_state:
+		try:
+			# Try the built-in clipboard support first.
+			pyperclip.copy(st.session_state[session_state_key])
+			# Clean up the unique session state key after copying.
+			del st.session_state[session_state_key]
+		except Exception as e:
+			st.toast(f"Error when copying text: {e}")
+			del st.session_state[session_state_key]
+
+# --------------------------------------------------------------------------- #
+#  Main: 渲染整個聊天介面
+# --------------------------------------------------------------------------- #
+def render_chatarea() -> None:
 	st.title("Private AI Playground")
-	st.caption("Model: " + default_config.MODEL_NAME)
+	st.caption(f"Model: {default_config.MODEL_NAME}")
 
+	# 迭代聊天歷史，並在每條訊息下方放置「複製」按鈕
 	for idx, msg in enumerate(st.session_state.chat_history):
-		# 1️⃣ 先顯示訊息本體
 		if isinstance(msg, HumanMessage):
 			with st.chat_message("user"):
 				st.write(msg.content)
-				# 2️⃣ 在使用者訊息後面加上 Copy 按鈕
-				copy_html = _copy_button_html(msg.content, idx, "user")
-				st.markdown(copy_html, unsafe_allow_html=True)
-		else:
+				_copy_button(msg.content, idx)
+		elif isinstance(msg, AIMessage):
 			with st.chat_message("assistant"):
 				st.write(msg.content)
-				# 2️⃣ 在 AI 訊息後面加上 Copy 按鈕
-				copy_html = _copy_button_html(msg.content, idx, "assistant")
-				st.markdown(copy_html, unsafe_allow_html=True)
+				_copy_button(msg.content, idx)
+		else:
+			# 其他可能的訊息類型（若有）
+			with st.chat_message("assistant"):
+				st.write(json.dumps(msg.__dict__, indent=2))
+				_copy_button(json.dumps(msg.__dict__, indent=2), idx)
 
 	user_input = st.chat_input("You:")
 	if user_input:
