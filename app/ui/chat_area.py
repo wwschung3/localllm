@@ -7,11 +7,20 @@ def render_chatarea():
 	st.title("Private AI Playground")
 	st.caption("Model: " + default_config.MODEL_NAME)
 
-	for msg in st.session_state.chat_history:
+	for idx, msg in enumerate(st.session_state.chat_history):
+		# 1️⃣ 先顯示訊息本體
 		if isinstance(msg, HumanMessage):
-			st.chat_message("user").write(msg.content)
+			with st.chat_message("user"):
+				st.write(msg.content)
+				# 2️⃣ 在使用者訊息後面加上 Copy 按鈕
+				copy_html = _copy_button_html(msg.content, idx, "user")
+				st.markdown(copy_html, unsafe_allow_html=True)
 		else:
-			st.chat_message("assistant").write(msg.content)
+			with st.chat_message("assistant"):
+				st.write(msg.content)
+				# 2️⃣ 在 AI 訊息後面加上 Copy 按鈕
+				copy_html = _copy_button_html(msg.content, idx, "assistant")
+				st.markdown(copy_html, unsafe_allow_html=True)
 
 	user_input = st.chat_input("You:")
 	if user_input:
