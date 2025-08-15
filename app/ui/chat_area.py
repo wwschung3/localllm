@@ -1,7 +1,34 @@
 import streamlit as st
+import json
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from utils import persistence, ollama_client
 import config as default_config
+
+def _copy_button_html(text: str, idx: int, role: str) -> str:
+	"""
+	產生一段簡易的 HTML 按鈕，點擊時會將 `text` 複製到剪貼簿。
+
+	參數:
+		text: 要複製的訊息文字。
+		idx: 訊息在歷史中的索引，用於產生唯一鍵。
+		role: 訊息角色（'user' 或 'assistant'），用於鍵值命名。
+
+	回傳:
+		以 `<button>` 包起來的 HTML 片段。
+	"""
+	# 先將文字 JSON-escape 以避免字元衝突
+	escaped_text = json.dumps(text)  # 這會回傳帶引號的字串
+	# 移除最外層的雙引號
+	escaped_text = escaped_text[1:-1]
+	# 產生唯一鍵
+	key = f"copy_{role}_{idx}"
+	# HTML 片段
+	return (
+		f'<button id="{key}" '
+		f'onclick="navigator.clipboard.writeText(`{escaped_text}`); '
+		f'alert(`已複製 ${role} 訊息`);" '
+		f'style="font-size:0.9rem; margin-top:4px;">Copy</button>'
+	)
 
 def render_chatarea():
 	st.title("Private AI Playground")
