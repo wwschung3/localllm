@@ -51,6 +51,8 @@ if "current_conversation_title" not in st.session_state:
     st.session_state.current_conversation_title = None
 if "auto_save" not in st.session_state:
     st.session_state.auto_save = config["auto_save"]
+if "use_search" not in st.session_state:
+    st.session_state.use_search = config["use_search"]
 if "uploaded_file_data" not in st.session_state:
     st.session_state.uploaded_file_data = [] # Initialize as a list
 

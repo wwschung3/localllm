@@ -38,7 +38,7 @@ def render_sidebar():
 
 	# The file uploader widget
 	uploaded_files = st.file_uploader(
-	    "Upload text files (content will be used as context for the next query):",
+		"Upload text files (content will be used as context for the next query):",
 		accept_multiple_files=True,
 		key="file_uploader"
 	)
@@ -166,6 +166,17 @@ def render_sidebar():
 	st.markdown("---")
 	st.header("Settings")
 	st.markdown("---")
+
+	st.subheader("Search Internet")
+	use_search_from_ui = st.checkbox(
+		"Enable Search Internet", value=st.session_state.use_search, key="use_search_checkbox"
+	)
+	if use_search_from_ui != st.session_state.use_search:
+		st.session_state.use_search = use_search_from_ui
+		persistence.save_config()
+
+	st.markdown("---")
+
 
 	st.subheader("Display Theme")
 	theme_choice = st.selectbox(
