@@ -73,12 +73,20 @@ def render_chatarea() -> None:
 			
 			all_file_contents = "\n\n".join(formatted_file_contents)
 			combined_input += "\n\n[Uploaded File Contents]:\n" + all_file_contents
-			# Clear the uploaded file data after use
-			st.session_state.uploaded_file_data = []
-
 
 		st.chat_message("user").write(combined_input)
 		st.session_state.chat_history.append(HumanMessage(content=combined_input))
+		tempIdx = 0
+		try:
+			if idx:
+				tempIdx = idx + 1
+		except NameError:
+			pass  # idx is undefined, so keep tempIdx as 0
+		_copy_button(combined_input, tempIdx)
+
+		# Clear the uploaded file data after use
+		st.session_state.uploaded_file_data = []
+		st.session_state.file_uploader_id = st.session_state.file_uploader_id + 1
 
 		with st.chat_message("assistant"):
 			with st.spinner("思考中…"):
@@ -94,10 +102,15 @@ def render_chatarea() -> None:
 					else:
 						system_prompt += "\n\nFirst, explain your reasoning and thought process starting with 'Thought:'. Then, provide your final answer starting with 'Answer:'."
 
-				extra_body = {
-					"reasoning_effort": st.session_state.reasoning_effort
+				PARAMS_BY_EFFORT = {
+					"low":    {"temperature": 0.2,  "top_p": 0.95, "frequency_penalty": 0.7, "presence_penalty": 0.7,  "max_tokens": 350},
+					"medium": {"temperature": 0.5,  "top_p": 0.90, "frequency_penalty": 0.4, "presence_penalty": 0.4,  "max_tokens": 2000},
+					"high":   {"temperature": 0.8,  "top_p": 0.80, "frequency_penalty": 0.2, "presence_penalty": 0.2,  "max_tokens": 20000},
 				}
-				
+				params = PARAMS_BY_EFFORT[st.session_state.reasoning_effort]
+				extra_body = {"reasoning_effort": st.session_state.reasoning_effort, **params}
+				system_prompt += f"\nMust use this reasoning_effort: {st.session_state.reasoning_effort};"
+
 				prompt = [SystemMessage(content=system_prompt)]
 				prompt.extend(st.session_state.chat_history[-st.session_state.history_length:])
 

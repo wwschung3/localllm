@@ -40,7 +40,7 @@ def render_sidebar():
 	uploaded_files = st.file_uploader(
 		"Upload text files (content will be used as context for the next query):",
 		accept_multiple_files=True,
-		key="file_uploader"
+		key=f"file_uploader_{st.session_state.file_uploader_id}"
 	)
 
 	# Process files when the uploader state changes

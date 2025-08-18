@@ -24,6 +24,7 @@ def load_config(file_path: str=default_config.CONFIG_FILE):
 				"Technical Assistant": "You are a highly detailed and technical assistant, specializing in programming and systems administration. Provide code examples and clear explanations.",
 				"Creative Writer": "You are a creative writer who excels at crafting compelling stories, poems, and scripts. Use vivid imagery and imaginative language."
 			})
+			config.setdefault("file_uploader_id", 0)
 			return config
 	return {
 		"system_prompt": default_config.DEFAULT_SYSTEM_PROMPT,
@@ -34,7 +35,8 @@ def load_config(file_path: str=default_config.CONFIG_FILE):
 		"history_length": default_config.DEFAULT_HISTORY_LENGTH,
 		"auto_save": default_config.DEFAULT_AUTO_SAVE,
 		"use_search": default_config.DEFAULT_USE_SEARCH,
-		"profiles": default_config.DEFAULT_PROFILES
+		"profiles": default_config.DEFAULT_PROFILES,
+		"file_uploader_id": default_config.DEFAULT_FILE_UPLOADER_ID
 	}
 
 def save_config(file_path: str=default_config.CONFIG_FILE):
@@ -49,6 +51,7 @@ def save_config(file_path: str=default_config.CONFIG_FILE):
 		"use_search": st.session_state.use_search,
 		"history_length": st.session_state.history_length,
 		"profiles": st.session_state.profiles,
+		"file_uploader_id": st.session_state.file_uploader_id
 	}
 	with open(file_path, "w") as f:
 		json.dump(config, f, indent=4)

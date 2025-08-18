@@ -55,6 +55,8 @@ if "use_search" not in st.session_state:
     st.session_state.use_search = config["use_search"]
 if "uploaded_file_data" not in st.session_state:
     st.session_state.uploaded_file_data = [] # Initialize as a list
+if "file_uploader_id" not in st.session_state:
+    st.session_state.file_uploader_id = config["file_uploader_id"];
 
 if st.session_state.dark_mode:
     load_css('style/dark_mode.css')
