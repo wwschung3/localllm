@@ -5,6 +5,13 @@ from utils import persistence, ollama_client
 import config as default_config
 import pyperclip
 
+def _get_unique_id() -> int:
+	"""
+	Return a unique integer that can be used as a widget key.
+	We simply use the current length of the chat history.
+	"""
+	return len(st.session_state.chat_history)
+
 
 def _copy_button(text: str, idx: int) -> None:
 	"""
@@ -76,13 +83,8 @@ def render_chatarea() -> None:
 
 		st.chat_message("user").write(combined_input)
 		st.session_state.chat_history.append(HumanMessage(content=combined_input))
-		tempIdx = 0
-		try:
-			if idx:
-				tempIdx = idx + 1
-		except NameError:
-			pass  # idx is undefined, so keep tempIdx as 0
-		_copy_button(combined_input, tempIdx)
+		new_idx = _get_unique_id() - 1  # the index of the just‑added message
+		_copy_button(combined_input, new_idx)
 
 		# Clear the uploaded file data after use
 		st.session_state.uploaded_file_data = []
@@ -103,7 +105,7 @@ def render_chatarea() -> None:
 						system_prompt += "\n\nFirst, explain your reasoning and thought process starting with 'Thought:'. Then, provide your final answer starting with 'Answer:'."
 
 				PARAMS_BY_EFFORT = {
-					"low":    {"temperature": 0.2,  "top_p": 0.95, "frequency_penalty": 0.7, "presence_penalty": 0.7,  "max_tokens": 350},
+					"low":	{"temperature": 0.2,  "top_p": 0.95, "frequency_penalty": 0.7, "presence_penalty": 0.7,  "max_tokens": 350},
 					"medium": {"temperature": 0.5,  "top_p": 0.90, "frequency_penalty": 0.4, "presence_penalty": 0.4,  "max_tokens": 2000},
 					"high":   {"temperature": 0.8,  "top_p": 0.80, "frequency_penalty": 0.2, "presence_penalty": 0.2,  "max_tokens": 20000},
 				}
