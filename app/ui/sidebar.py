@@ -1,6 +1,8 @@
 import streamlit as st
 from utils import persistence
 import tiktoken
+import json
+import streamlit.components.v1 as components
 
 def process_uploaded_files(uploaded_files):
 	"""Processes uploaded text files, calculates token counts, and updates session state."""
@@ -34,7 +36,7 @@ def render_sidebar():
 
 	# Initialize token encoder in session state if it doesn't exist
 	if "token_encoder" not in st.session_state:
-	   	st.session_state.token_encoder = tiktoken.get_encoding("cl100k_base")
+		st.session_state.token_encoder = tiktoken.get_encoding("cl100k_base")
 
 	# The file uploader widget
 	uploaded_files = st.file_uploader(
@@ -61,6 +63,24 @@ def render_sidebar():
 				st.session_state.selected_profile_name = profile_name
 				st.session_state.system_prompt = st.session_state.profiles[profile_name]
 				st.rerun()
+		current_profile = st.session_state.get("selected_profile_name", "")
+
+		js_value = json.dumps(current_profile)
+
+		# Render the script with a zero‑height component so it doesn't affect layout.
+		components.html(
+			f"""
+			<script>
+			// When the iframe finishes loading, expose the value to the parent page
+			document.addEventListener("DOMContentLoaded", function() {{
+				// Set the variable on the parent (the main page)
+				window.parent.selectedProfileName = {js_value};
+				console.log("parent.selectedProfileName set to:", window.parent.selectedProfileName);
+			}});
+			</script>
+			""",
+			height=0,  # invisible
+		)
 	st.markdown("---")
 
 	st.subheader("Edit Current Profile")

@@ -94,6 +94,21 @@ body {
     background-color: #d0d0d0;
     border: 1px solid #aaaaaa;
 }
+
+/* 1. The active profile button – overrides the default button style. */
+.stSidebar div[class*="st-key-profile_button_"] > .stButton > button.active-profile {
+    background-color: #4CAF50;          /* Green background */
+    color: #FFFFFF;                     /* White text */
+    border: 2px solid #388E3C;          /* Darker green border */
+}
+
+/* 2. Optional: style the hover state of the active button so it
+   still looks interactive. */
+.stSidebar div[class*="st-key-profile_button_"] > .stButton > button.active-profile:hover {
+    background-color: #45A049;          /* Slightly darker green */
+    border-color: #357A38;
+}
+
 h1, h2, h3, h4, h5, h6 {
     color: #1a1a1a;
 }
