@@ -1,7 +1,7 @@
 import streamlit as st
 import json
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from utils import persistence, ollama_client
+from utils import persistence, ollama_client, prompt_builder # Added prompt_builder
 import config as default_config
 import pyperclip
 
@@ -92,17 +92,14 @@ def render_chatarea() -> None:
 
 		with st.chat_message("assistant"):
 			with st.spinner("思考中…"):
-				system_prompt = st.session_state.system_prompt
-				language_instruction = "Respond in English."
-				if st.session_state.selected_language == "zh-tw":
-					language_instruction = "Respond in Traditional Chinese."
-				system_prompt += f" {language_instruction}"
-
-				if st.session_state.show_cot:
-					if st.session_state.selected_language == "zh-tw":
-						system_prompt += "\n\n請先以 '思考過程：' 開頭解釋你的推理和思考流程，然後再以 '最終答案：' 開頭給出最終答案。"
-					else:
-						system_prompt += "\n\nFirst, explain your reasoning and thought process starting with 'Thought:'. Then, provide your final answer starting with 'Answer:'."
+				# Construct prompt using the new prompt_builder module
+				prompt = prompt_builder.build_prompt(
+					st.session_state.system_prompt,
+					st.session_state.selected_language,
+					st.session_state.show_cot,
+					st.session_state.reasoning_effort,
+					st.session_state.chat_history
+				)
 
 				PARAMS_BY_EFFORT = {
 					"low":	{"temperature": 0.2,  "top_p": 0.95, "frequency_penalty": 0.7, "presence_penalty": 0.7,  "max_tokens": 350},
@@ -111,11 +108,7 @@ def render_chatarea() -> None:
 				}
 				params = PARAMS_BY_EFFORT[st.session_state.reasoning_effort]
 				extra_body = {"reasoning_effort": st.session_state.reasoning_effort, **params}
-				system_prompt += f"\nMust use this reasoning_effort: {st.session_state.reasoning_effort};"
-
-				prompt = [SystemMessage(content=system_prompt)]
-				prompt.extend(st.session_state.chat_history[-st.session_state.history_length:])
-
+				
 				if not default_config.USE_STREAM:
 					response = ollama_client.get_ollama_response(default_config.MODEL_NAME, prompt, extra_body=extra_body)
 					st.write(response)
@@ -130,3 +123,4 @@ def render_chatarea() -> None:
 				
 				if st.session_state.auto_save:
 					persistence.save_current_conversation()
+
