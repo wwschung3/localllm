@@ -4,3 +4,8 @@ config.json
 conversations.json
 venv/*
 !venv/.gitkeep
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
