@@ -7,7 +7,7 @@ from rag.embedding_model import embedding_model
 from rag.vector_store_manager import vector_store_manager
 # Assuming a simple text chunking strategy for demonstration
 from langchain.text_splitter import RecursiveCharacterTextSplitter 
-import tqdm # Added import for tqdm
+import tqdm
 
 
 def process_uploaded_files(uploaded_files):
@@ -17,6 +17,7 @@ def process_uploaded_files(uploaded_files):
 		st.session_state.uploaded_file_data = []
 		st.session_state.file_token_counts = {}
 		st.session_state.rag_context = [] # Clear RAG context
+		st.session_state.rag_enabled = False # Disable RAG
 		vector_store_manager.clear_index() # Clear RAG index if no files are uploaded
 		return
 
@@ -24,14 +25,12 @@ def process_uploaded_files(uploaded_files):
 	st.session_state.file_token_counts = {}
 	st.session_state.rag_context = [] # Reset RAG context for new uploads
 	
-	# Initialize RAG components
+	# Initialize RAG components (embedding model only)
 	embedding_model.load()
-	# Ensure vector store is initialized with the correct dimension
-	vector_store_manager.init_vector_store(dim=embedding_model.model.get_sentence_embedding_dimension())
-
+	
 	doc_id_counter = 0 # Unique ID for each chunk
 
-	all_uploaded_content = ""
+	all_uploaded_content_with_filenames = "" # Changed variable name to reflect content
 	for uploaded_file in uploaded_files:
 		try:
 			file_content = None
@@ -51,7 +50,8 @@ def process_uploaded_files(uploaded_files):
 
 				st.session_state.uploaded_file_data.append((uploaded_file.name, file_content))
 				st.session_state.file_token_counts[uploaded_file.name] = token_count
-				all_uploaded_content += file_content + "\n\n" # Accumulate content for total count and potential RAG processing
+				# Prepend filename to content for RAG processing
+				all_uploaded_content_with_filenames += f"--- Filename: {uploaded_file.name} ---\n{file_content}\n\n" 
 				st.success(f"File '{uploaded_file.name}' uploaded successfully! Tokens: **{token_count}**")
 			else:
 				st.error(f"Could not decode file '{uploaded_file.name}'. The encoding may be unsupported.")
@@ -74,24 +74,17 @@ def process_uploaded_files(uploaded_files):
 			length_function=len, # Use character length for splitting
 		)
 		
-		# Chunk the combined content of all uploaded files
-		chunks = text_splitter.split_text(all_uploaded_content)
+		# Chunk the combined content of all uploaded files (now including filenames)
+		chunks = text_splitter.split_text(all_uploaded_content_with_filenames)
 		
 		st.info(f"Splitting content into {len(chunks)} chunks for RAG...")
 
-		retrieved_chunks_texts = []
-		# For demonstration, we'll embed and add all chunks to the vector store
-		# In a real RAG flow, you'd then use a query to search these chunks.
-		# For now, we'll assume the most recent user query (from chat_area) will trigger the search.
-		# For simplicity, we'll add all chunks to the vector store here.
-		# The actual retrieval based on user's query will happen in chat_area or a separate function.
-
-		# For the initial RAG context to pass to the LLM right after upload,
-		# we'll just take the first few chunks or a summary.
-		# A better RAG implementation would trigger a search *after* the user types their query.
-		# For now, let's simply store all chunks in the vector store and prepare for search later.
+		# Clear existing vector store before adding new chunks
+		vector_store_manager.clear_index() 
+		# Re-initialize the vector store after clearing it and before adding documents
+		vector_store_manager.init_vector_store(dim=embedding_model.model.get_sentence_embedding_dimension())
 		
-		for i, chunk in enumerate(tqdm.tqdm(chunks, desc="Embedding chunks")):
+		for i, chunk in enumerate(tqdm.tqdm(chunks, desc="Embedding chunks")): # Corrected tqdm usage
 			# Embed the content
 			vector = embedding_model.embed_text(chunk)
 			
@@ -102,12 +95,6 @@ def process_uploaded_files(uploaded_files):
 		vector_store_manager.save_metadata()
 		st.success(f"All {len(chunks)} chunks processed and added to vector store for RAG.")
 
-		# For immediate RAG context for the *next* LLM call, we would need to run a search.
-		# Since the user hasn't typed a query yet, we can't do a context-aware search.
-		# This part of the logic needs to be tied to the actual user query.
-		# Let's adjust sidebar.py to only *prepare* the vector store,
-		# and chat_area.py will be responsible for *searching* the vector store
-		# based on the user's *new* query.
 		st.session_state.rag_enabled = True # Indicate that RAG is active
 		st.session_state.rag_context = [] # Initialize empty, will be filled on query
 

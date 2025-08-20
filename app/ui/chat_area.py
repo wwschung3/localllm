@@ -4,6 +4,8 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from utils import persistence, ollama_client, prompt_builder
 import config as default_config
 import pyperclip
+from rag.embedding_model import embedding_model # Import embedding_model
+from rag.vector_store_manager import vector_store_manager # Import vector_store_manager
 
 def _get_unique_id() -> int:
 	"""
@@ -70,50 +72,77 @@ def render_chatarea() -> None:
 
 	user_input = st.chat_input("You:")
 	if user_input:
-		# Combine user input and relevant context (either RAG or raw file content)
-		combined_input = user_input
+		# This is the message that will be displayed to the user
+		display_input = user_input
+		# This is the context that will be passed to the LLM via the system prompt
+		context_for_llm = None 
 		
-		# Check if RAG context exists and is not empty
-		if "rag_context" in st.session_state and st.session_state.rag_context:
-			# If RAG was triggered, use the retrieved context
-			# This context should already be summarized or chunked appropriately
-			formatted_rag_context = "\n\n".join(st.session_state.rag_context)
-			combined_input += "\n\n[Relevant Context from Uploaded Files]:\n" + formatted_rag_context
-			st.session_state.rag_context = [] # Clear RAG context after use
-		elif "uploaded_file_data" in st.session_state and st.session_state.uploaded_file_data:
-			# If no RAG context (meaning total tokens were below threshold),
-			# use the raw uploaded file contents directly.
+		# If RAG is enabled, perform a search based on the user's query
+		if st.session_state.rag_enabled:
+			st.info("Searching RAG context...")
+			# Embed the user's query
+			query_vector = embedding_model.embed_text(user_input)
+			# Search the vector store for relevant chunks
+			results = vector_store_manager.search(query_vector, k=5) # Retrieve top 5 chunks
+			
+			if results:
+				retrieved_texts = []
+				for doc_id, score in results:
+					# Retrieve the actual text content using the doc_id
+					text_content = vector_store_manager.metadata.get(doc_id)
+					if text_content:
+						retrieved_texts.append(f"Document ID {doc_id} (Score: {score:.4f}):\n{text_content}")
+				
+				if retrieved_texts:
+					formatted_rag_context = "\n\n---\n\n".join(retrieved_texts)
+					display_input += "\n\n[Relevant Context from Uploaded Files]:\n" + formatted_rag_context
+					context_for_llm = formatted_rag_context
+					st.session_state.rag_context = retrieved_texts # Store for potential future display/debug if needed
+					st.success("RAG context found and added to prompt.")
+				else:
+					st.warning("No relevant RAG context found for your query.")
+					context_for_llm = None # Ensure it's None if no relevant context
+			else:
+				st.warning("No RAG index available or no results found. Using raw uploaded content if available.")
+				context_for_llm = None # Ensure it's None if no results
+
+		# If RAG was NOT enabled OR no RAG context was found, check for raw uploaded file data
+		# and pass it as context. This acts as a fallback or for smaller files.
+		if not context_for_llm and st.session_state.uploaded_file_data:
 			formatted_file_contents = []
 			for file_name, file_content in st.session_state.uploaded_file_data:
 				formatted_file_contents.append(f"--- File: {file_name} ---\n{file_content}")
 			
 			all_file_contents = "\n\n".join(formatted_file_contents)
-			combined_input += "\n\n[Uploaded File Contents]:\n" + all_file_contents
+			display_input += "\n\n[Uploaded File Contents]:\n" + all_file_contents
+			context_for_llm = all_file_contents # This will be the context for the LLM
+			st.session_state.rag_context = [] # Clear RAG context if raw files are used
 
 
-		st.chat_message("user").write(combined_input)
-		st.session_state.chat_history.append(HumanMessage(content=combined_input))
-		new_idx = _get_unique_id() - 1  # the index of the just‑added message
-		_copy_button(combined_input, new_idx)
+		# Display the combined input to the user
+		st.chat_message("user").write(display_input)
+		new_idx = _get_unique_id() # Get unique ID before appending
+		_copy_button(display_input, new_idx)
+
+		# Append ONLY the original user_input to chat_history for LLM's conversational memory
+		st.session_state.chat_history.append(HumanMessage(content=user_input))
 
 		# Clear the uploaded file data after use, regardless of RAG
 		st.session_state.uploaded_file_data = []
-		st.session_state.file_uploader_id = st.session_state.file_uploader_id + 1
+		st.session_state.file_uploader_id = st.session_state.file_uploader_id + 1 # Increment to clear uploader visually
+
 
 		with st.chat_message("assistant"):
 			with st.spinner("思考中…"):
-				# Construct prompt using the new prompt_builder module
-				# Pass rag_context to prompt_builder if available
+				# Construct prompt using the prompt_builder module
+				# Pass the separate context_for_llm to prompt_builder
 				prompt = prompt_builder.build_prompt(
 					st.session_state.system_prompt,
 					st.session_state.selected_language,
 					st.session_state.show_cot,
 					st.session_state.reasoning_effort,
-					st.session_state.chat_history,
-					# If RAG was triggered, send the original user input to the LLM,
-					# and the rag_context will be added in prompt_builder's system message.
-					# Otherwise, the combined_input already includes the raw file content.
-					rag_context=formatted_rag_context if "rag_context" in st.session_state and st.session_state.rag_context else None
+					st.session_state.chat_history, # This now contains ONLY clean chat turns
+					rag_context=context_for_llm # This is the retrieved RAG or raw file content
 				)
 
 				PARAMS_BY_EFFORT = {
