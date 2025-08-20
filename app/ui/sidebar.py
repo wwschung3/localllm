@@ -3,20 +3,46 @@ from utils import persistence
 import tiktoken
 import json
 import streamlit.components.v1 as components
+from rag.embedding_model import embedding_model
+from rag.vector_store_manager import vector_store_manager
 
 def process_uploaded_files(uploaded_files):
-	"""Processes uploaded text files, calculates token counts, and updates session state."""
+	"""Processes uploaded text files, calculates token counts, and updates session state.
+	If token count exceeds 2000, it processes them with RAG."""
 	if not uploaded_files:
 		st.session_state.uploaded_file_data = []
 		st.session_state.file_token_counts = {}
+		vector_store_manager.clear_index() # Clear RAG index if no files are uploaded
 		return
 
 	st.session_state.uploaded_file_data = []
 	st.session_state.file_token_counts = {}
+	
+	# Initialize RAG components
+	embedding_model.load()
+	vector_store_manager.init_vector_store(dim=embedding_model.model.get_sentence_embedding_dimension()) # Use model's dimension
+
+	doc_id_counter = 0 # Unique ID for each chunk
 
 	for uploaded_file in uploaded_files:
 		try:
-			file_content = uploaded_file.read().decode("utf-8")
+			file_content = None
+			encodings_to_try = ['utf-8', 'big5', 'gbk', 'gb2312', 'latin-1']
+
+			for encoding in encodings_to_try:
+				try:
+					# Move the file pointer back to the beginning before each decode attempt
+					uploaded_file.seek(0)
+					file_content = uploaded_file.read().decode(encoding)
+					break  # Exit the loop if decoding is successful
+				except UnicodeDecodeError:
+					continue  # Try the next encoding
+
+			if file_content is not None:
+				# Use file_content here
+				st.success("File decoded successfully!")
+			else:
+				st.error("Could not decode the file. The encoding may be unsupported.")
 			tokens = st.session_state.token_encoder.encode(file_content)
 			token_count = len(tokens)
 
@@ -24,6 +50,25 @@ def process_uploaded_files(uploaded_files):
 			st.session_state.file_token_counts[uploaded_file.name] = token_count
 
 			st.success(f"File '{uploaded_file.name}' uploaded successfully! Tokens: **{token_count}**")
+
+			total_token_count = sum(st.session_state.file_token_counts.values())
+
+			# If token count exceeds 1500, process with RAG
+			if total_token_count > 1500:
+				st.info(f"File '{uploaded_file.name}' is large ({token_count} tokens). Processing for RAG...")
+				# For simplicity, we'll treat the entire file as one chunk for now
+				# In a real-world scenario, you'd chunk this file into smaller pieces
+				# and add each chunk to the vector store.
+				
+				# Embed the content
+				vector = embedding_model.embed_text(file_content)
+				
+				# Add to vector store
+				vector_store_manager.add_document(doc_id_counter, vector, file_content)
+				doc_id_counter += 1 # Increment for the next chunk/file
+				vector_store_manager.save_metadata() # Save metadata after adding document
+				st.success(f"File '{uploaded_file.name}' processed for RAG.")
+
 		except Exception as e:
 			st.error(f"Error reading file '{uploaded_file.name}': {e}")
 
@@ -137,6 +182,7 @@ def render_sidebar():
 			st.session_state.chat_history = []
 			st.session_state.current_conversation_title = None
 			st.session_state.uploaded_file_data = []
+			vector_store_manager.clear_index() # Clear RAG index on new chat
 			st.rerun()
 
 	if st.session_state.rename_mode:
@@ -177,6 +223,7 @@ def render_sidebar():
 			st.session_state.chat_history = []
 			st.session_state.current_conversation_title = None
 			st.session_state.uploaded_file_data = []
+			vector_store_manager.clear_index() # Clear RAG index on clearing all conversations
 			persistence.save_conversations()
 			st.toast("All conversations cleared!")
 			st.rerun()
