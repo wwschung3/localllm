@@ -1,7 +1,5 @@
 .DS_Store
 */.DS_Store
-config.json
-conversations.json
 venv/*
 !venv/.gitkeep
 app/vector_store/*

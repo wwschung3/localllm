@@ -8,6 +8,43 @@ from rag.vector_store_manager import vector_store_manager
 # Assuming a simple text chunking strategy for demonstration
 from langchain.text_splitter import RecursiveCharacterTextSplitter 
 import tqdm
+import csv # Import the csv module
+import io # Import io for string-based file handling
+
+
+def _process_csv_file(uploaded_file, file_content_raw, all_content_for_rag_processing):
+	"""
+	Processes a single CSV file, extracts rows, and formats them for RAG.
+	Appends formatted rows to all_content_for_rag_processing.
+	"""
+	st.info(f"Processing '{uploaded_file.name}' as CSV...")
+	csv_file = io.StringIO(file_content_raw)
+	csv_reader = csv.reader(csv_file)
+	
+	headers = next(csv_reader, None) # Read header row
+	if headers:
+		for row_idx, row in enumerate(csv_reader):
+			# Create a formatted string for each row
+			formatted_row = f"--- File: {uploaded_file.name} (Row {row_idx + 2}) ---\n" # +2 for header and 0-index
+			row_dict = {}
+			for i, header in enumerate(headers):
+				if i < len(row): # Ensure row has data for this header
+					row_dict[header] = row[i]
+			formatted_row += json.dumps(row_dict, ensure_ascii=False, indent=2) # Use JSON for structured row
+			
+			all_content_for_rag_processing.append({
+				'text': formatted_row,
+				'filename': uploaded_file.name,
+				'original_content': formatted_row # Store the formatted row as the content to be embedded
+			})
+	else:
+		st.warning(f"CSV file '{uploaded_file.name}' appears to be empty or missing headers. Treating as plain text.")
+		# If no headers, treat as plain text for chunking
+		all_content_for_rag_processing.append({
+			'text': f"--- File: {uploaded_file.name} ---\n{file_content_raw}",
+			'filename': uploaded_file.name,
+			'original_content': file_content_raw # Store raw content for embedding if not CSV
+		})
 
 
 def process_uploaded_files(uploaded_files):
@@ -19,6 +56,7 @@ def process_uploaded_files(uploaded_files):
 		st.session_state.rag_context = [] # Clear RAG context
 		st.session_state.rag_enabled = False # Disable RAG
 		vector_store_manager.clear_index() # Clear RAG index if no files are uploaded
+		st.session_state.last_uploaded_filename = None # Clear last uploaded filename
 		return
 
 	st.session_state.uploaded_file_data = []
@@ -30,33 +68,56 @@ def process_uploaded_files(uploaded_files):
 	
 	doc_id_counter = 0 # Unique ID for each chunk
 
-	all_uploaded_content_with_filenames = "" # Changed variable name to reflect content
+	# Clear existing vector store before adding new chunks from current upload
+	vector_store_manager.clear_index() 
+	# Re-initialize the vector store after clearing it and before adding documents
+	vector_store_manager.init_vector_store(dim=embedding_model.model.get_sentence_embedding_dimension())
+
+	all_content_for_rag_processing = [] # List to hold formatted chunks (rows/text) for RAG
+	current_uploaded_filenames = [] # To keep track of files in the current upload batch
+
 	for uploaded_file in uploaded_files:
 		try:
-			file_content = None
-			encodings_to_try = ['utf-8', 'gbk', 'gb2312', 'big5', 'latin-1']
+			file_content_raw = None
+			encodings_to_try = ['utf-8', 'big5', 'gbk', 'gb2312', 'latin-1']
 
 			for encoding in encodings_to_try:
 				try:
 					uploaded_file.seek(0)
-					file_content = uploaded_file.read().decode(encoding)
+					file_content_raw = uploaded_file.read().decode(encoding)
 					break  # Exit the loop if decoding is successful
 				except UnicodeDecodeError:
 					continue  # Try the next encoding
 
-			if file_content is not None:
-				tokens = st.session_state.token_encoder.encode(file_content)
+			if file_content_raw is not None:
+				tokens = st.session_state.token_encoder.encode(file_content_raw)
 				token_count = len(tokens)
 
-				st.session_state.uploaded_file_data.append((uploaded_file.name, file_content))
+				st.session_state.uploaded_file_data.append((uploaded_file.name, file_content_raw))
 				st.session_state.file_token_counts[uploaded_file.name] = token_count
-				# Prepend filename to content for RAG processing
-				all_uploaded_content_with_filenames += f"--- Filename: {uploaded_file.name} ---\n{file_content}\n\n" 
+				current_uploaded_filenames.append(uploaded_file.name) # Add to current batch
 				st.success(f"File '{uploaded_file.name}' uploaded successfully! Tokens: **{token_count}**")
+
+				# --- Conditional processing based on file type ---
+				if uploaded_file.name.lower().endswith('.csv'):
+					_process_csv_file(uploaded_file, file_content_raw, all_content_for_rag_processing)
+				else: # --- Plain text processing ---
+					# For non-CSV files, prepend filename and store raw content
+					all_content_for_rag_processing.append({
+						'text': f"--- File: {uploaded_file.name} ---\n{file_content_raw}",
+						'filename': uploaded_file.name,
+						'original_content': file_content_raw # Store raw content for embedding
+					})
 			else:
 				st.error(f"Could not decode file '{uploaded_file.name}'. The encoding may be unsupported.")
 		except Exception as e:
 			st.error(f"Error reading file '{uploaded_file.name}': {e}")
+
+	# Update last_uploaded_filename only if files were actually uploaded in this batch
+	if current_uploaded_filenames:
+		st.session_state.last_uploaded_filename = current_uploaded_filenames[-1]
+	else:
+		st.session_state.last_uploaded_filename = None # No files uploaded in this batch
 
 	total_token_count = sum(st.session_state.file_token_counts.values())
 
@@ -66,34 +127,52 @@ def process_uploaded_files(uploaded_files):
 	if total_token_count > RAG_THRESHOLD:
 		st.warning(f"Total tokens ({total_token_count}) exceed the RAG threshold ({RAG_THRESHOLD}). Processing files with RAG...")
 		
-		# Initialize text splitter for chunking
-		# Adjust chunk_size and chunk_overlap based on your needs and model's context window
-		text_splitter = RecursiveCharacterTextSplitter(
-			chunk_size=500,  # Smaller chunks for more precise retrieval
-			chunk_overlap=100,
-			length_function=len, # Use character length for splitting
-		)
+		# For CSVs, chunks are already formed per row. For text files, we still need text_splitter.
+		# Combine all content that needs to be chunked by RecursiveCharacterTextSplitter
+		content_for_text_splitter = ""
+		for entry in all_content_for_rag_processing:
+			# Only add if it's not a CSV row (which is already a "chunk")
+			if not entry['filename'].lower().endswith('.csv'):
+				content_for_text_splitter += entry['original_content'] + "\n\n"
 		
-		# Chunk the combined content of all uploaded files (now including filenames)
-		chunks = text_splitter.split_text(all_uploaded_content_with_filenames)
-		
-		st.info(f"Splitting content into {len(chunks)} chunks for RAG...")
+		final_chunks_to_embed = []
+		if content_for_text_splitter: # If there's non-CSV text to chunk
+			text_splitter = RecursiveCharacterTextSplitter(
+				chunk_size=500,  # Smaller chunks for more precise retrieval
+				chunk_overlap=100,
+				length_function=len, # Use character length for splitting
+			)
+			chunks_from_text = text_splitter.split_text(content_for_text_splitter)
+			for chunk_text in chunks_from_text:
+				# We lose specific filename for these chunks if multiple text files were combined.
+				# A more advanced solution would track filename per text chunk.
+				# For now, assign "multiple_text_files" or similar.
+				final_chunks_to_embed.append({
+					'text': chunk_text,
+					'filename': "multiple_text_files" if len(uploaded_files) > 1 and not uploaded_files[0].name.lower().endswith('.csv') else uploaded_files[0].name
+				})
+			st.info(f"Splitting non-CSV content into {len(chunks_from_text)} chunks for RAG.")
 
-		# Clear existing vector store before adding new chunks
-		vector_store_manager.clear_index() 
-		# Re-initialize the vector store after clearing it and before adding documents
-		vector_store_manager.init_vector_store(dim=embedding_model.model.get_sentence_embedding_dimension())
+		# Add the pre-formatted CSV rows as chunks
+		for entry in all_content_for_rag_processing:
+			if entry['filename'].lower().endswith('.csv'):
+				final_chunks_to_embed.append({
+					'text': entry['text'], # This is the formatted row string
+					'filename': entry['filename']
+				})
 		
-		for i, chunk in enumerate(tqdm.tqdm(chunks, desc="Embedding chunks")): # Corrected tqdm usage
-			# Embed the content
-			vector = embedding_model.embed_text(chunk)
+		st.info(f"Total RAG chunks to embed: {len(final_chunks_to_embed)}")
+
+		for i, chunk_info in enumerate(tqdm.tqdm(final_chunks_to_embed, desc="Embedding chunks")): 
+			# Embed the content (which is the formatted chunk text)
+			vector = embedding_model.embed_text(chunk_info['text'])
 			
-			# Add to vector store
-			vector_store_manager.add_document(doc_id_counter, vector, chunk)
+			# Add to vector store, passing the correct filename
+			vector_store_manager.add_document(doc_id_counter, vector, chunk_info['text'], source_filename=chunk_info['filename'])
 			doc_id_counter += 1
 		
 		vector_store_manager.save_metadata()
-		st.success(f"All {len(chunks)} chunks processed and added to vector store for RAG.")
+		st.success(f"All {len(final_chunks_to_embed)} chunks processed and added to vector store for RAG.")
 
 		st.session_state.rag_enabled = True # Indicate that RAG is active
 		st.session_state.rag_context = [] # Initialize empty, will be filled on query
@@ -119,6 +198,9 @@ def render_sidebar():
 		st.session_state.rag_context = []
 	if "rag_enabled" not in st.session_state:
 		st.session_state.rag_enabled = False
+	# Initialize last_uploaded_filename if not present
+	if 'last_uploaded_filename' not in st.session_state:
+		st.session_state.last_uploaded_filename = None
 
 	# The file uploader widget
 	uploaded_files = st.file_uploader(
@@ -222,6 +304,7 @@ def render_sidebar():
 			st.session_state.rag_context = [] # Clear RAG context on new chat
 			st.session_state.rag_enabled = False # Disable RAG on new chat
 			vector_store_manager.clear_index() # Clear RAG index on new chat
+			st.session_state.last_uploaded_filename = None # Clear last uploaded filename
 			st.rerun()
 
 	if st.session_state.rename_mode:
@@ -265,6 +348,7 @@ def render_sidebar():
 			st.session_state.rag_context = [] # Clear RAG context on clearing all conversations
 			st.session_state.rag_enabled = False # Disable RAG on clearing all conversations
 			vector_store_manager.clear_index() # Clear RAG index on clearing all conversations
+			st.session_state.last_uploaded_filename = None # Clear last uploaded filename
 			persistence.save_conversations()
 			st.toast("All conversations cleared!")
 			st.rerun()

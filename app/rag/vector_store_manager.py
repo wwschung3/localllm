@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any # Added Any for Dict value type
 
 import faiss
 import numpy as np
@@ -37,7 +37,8 @@ class VectorStoreManager:
         self.index_path = Path(index_path)
         self.metadata_path = Path(metadata_path)
         self.index: faiss.IndexFlatIP | None = None  # Inner‑Product (cosine) 索引
-        self.metadata: Dict[int, str] = {}
+        # metadata now stores a dict: {doc_id: {'text': '...', 'filename': '...'}}
+        self.metadata: Dict[int, Dict[str, str]] = {}
 
     # ------------------------------------------------------------------
     # 1. 初始化 / 讀取索引
@@ -72,9 +73,9 @@ class VectorStoreManager:
         """
         if self.metadata_path.exists():
             with open(self.metadata_path, "r", encoding="utf-8") as f:
-                self.metadata = json.load(f)
-                # json 讀回來的是 str → str，轉成 int → str
-                self.metadata = {int(k): v for k, v in self.metadata.items()}
+                loaded_data = json.load(f)
+                # json 讀回來的是 str → dict，轉成 int → dict
+                self.metadata = {int(k): v for k, v in loaded_data.items()}
             print(f"[metadata] 載入 {len(self.metadata)} 個片段")
         else:
             self.metadata = {}
@@ -96,6 +97,7 @@ class VectorStoreManager:
         doc_id: int,
         vector: np.ndarray,
         text: str,
+        source_filename: str = "unknown", # Added source_filename parameter
     ) -> None:
         """
         把單一文件（向量 + 文字）加入索引
@@ -103,6 +105,7 @@ class VectorStoreManager:
         :param doc_id: 文件 ID（必須唯一）
         :param vector: 512‑維向量
         :param text: 文字片段
+        :param source_filename: 來源檔案名稱
         """
         if self.index is None:
             raise RuntimeError("索引尚未初始化，請先呼叫 init_vector_store()")
@@ -110,8 +113,8 @@ class VectorStoreManager:
         # 1️⃣ 將向量加入索引
         self.index.add(vector.reshape(1, -1))
 
-        # 2️⃣ 儲存 metadata
-        self.metadata[doc_id] = text
+        # 2️⃣ 儲存 metadata，現在包含 filename
+        self.metadata[doc_id] = {'text': text, 'filename': source_filename}
 
     # ------------------------------------------------------------------
     # 4. 搜尋
@@ -120,13 +123,13 @@ class VectorStoreManager:
         self,
         query_vector: np.ndarray,
         k: int = 5,
-    ) -> List[Tuple[int, float]]:
+    ) -> List[Tuple[int, float, str]]: # Changed return type to include filename
         """
         根據查詢向量搜尋最相近的 k 個文件
 
         :param query_vector: 查詢向量
         :param k: 取前 k 個
-        :return: [(doc_id, 相似度), ...]
+        :return: [(doc_id, 相似度, 來源檔案名稱), ...]
         """
         if self.index is None:
             raise RuntimeError("索引尚未初始化，請先呼叫 init_vector_store()")
@@ -135,11 +138,14 @@ class VectorStoreManager:
             query_vector.reshape(1, -1), k
         )  # distances: (1, k), indices: (1, k)
 
-        results: List[Tuple[int, float]] = []
+        results: List[Tuple[int, float, str]] = []
         for idx, dist in zip(indices[0], distances[0]):
             if idx == -1:  # FAISS 會回傳 -1 代表無資料
                 continue
-            results.append((int(idx), float(dist)))
+            # Retrieve filename from metadata
+            metadata_entry = self.metadata.get(int(idx))
+            filename = metadata_entry['filename'] if metadata_entry else "unknown"
+            results.append((int(idx), float(dist), filename))
         return results
 
     # ------------------------------------------------------------------

@@ -1,7 +1,7 @@
 CONFIG_FILE="config.json"
 CONVERSATIONS_FILE="conversations.json"
 MODEL_NAME="gpt-oss:20b"
-USE_STREAM=True
+USE_STREAM=False
 
 DEFAULT_INIT_FILE_UPLOADER_ID = 0;
 

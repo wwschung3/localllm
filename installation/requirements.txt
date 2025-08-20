@@ -11,3 +11,4 @@ chromadb
 tiktoken
 pyperclip
 faiss-cpu
+openai

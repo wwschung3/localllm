@@ -7,6 +7,8 @@ import pyperclip
 from rag.embedding_model import embedding_model # Import embedding_model
 from rag.vector_store_manager import vector_store_manager # Import vector_store_manager
 
+top_k = 20
+
 def _get_unique_id() -> int:
 	"""
 	Return a unique integer that can be used as a widget key.
@@ -54,6 +56,10 @@ def render_chatarea() -> None:
 	st.title("Private AI Playground")
 	st.caption(f"Model: {default_config.MODEL_NAME}")
 
+	# Initialize last_uploaded_filename if not present
+	if 'last_uploaded_filename' not in st.session_state:
+		st.session_state.last_uploaded_filename = None
+
 	# 迭代聊天歷史，並在每條訊息下方放置「複製」按鈕
 	for idx, msg in enumerate(st.session_state.chat_history):
 		if isinstance(msg, HumanMessage):
@@ -83,15 +89,48 @@ def render_chatarea() -> None:
 			# Embed the user's query
 			query_vector = embedding_model.embed_text(user_input)
 			# Search the vector store for relevant chunks
-			results = vector_store_manager.search(query_vector, k=5) # Retrieve top 5 chunks
+			# The search results now include filename: (doc_id, score, filename)
+			results = vector_store_manager.search(query_vector, k=10) # Retrieve more chunks to allow for prioritization
 			
 			if results:
+				# Prioritization Logic:
+				# If user mentions "this file", "last file", or the specific last uploaded filename,
+				# prioritize chunks from that file.
+				prioritized_results = []
+				other_results = []
+				
+				# Keywords to detect intent for the last uploaded file
+				user_input_lower = user_input.lower()
+				referring_to_last_file = False
+				if st.session_state.last_uploaded_filename:
+					if "this file" in user_input_lower or \
+					   "the last file" in user_input_lower or \
+					   st.session_state.last_uploaded_filename.lower() in user_input_lower:
+						referring_to_last_file = True
+
+				if referring_to_last_file:
+					st.info(f"Prioritizing content from '{st.session_state.last_uploaded_filename}' based on your query.")
+					for doc_id, score, filename in results:
+						if filename == st.session_state.last_uploaded_filename:
+							prioritized_results.append((doc_id, score, filename))
+						else:
+							other_results.append((doc_id, score, filename))
+					# Combine prioritized results first, then other results, up to k
+					# Ensure unique doc_ids if there's overlap (though unlikely with distinct lists)
+					final_results = prioritized_results + other_results
+				else:
+					final_results = results # No specific prioritization, use original search results
+
+				# Limit to top K chunks for the LLM context
+				final_results = final_results[:top_k]
+
 				retrieved_texts = []
-				for doc_id, score in results:
-					# Retrieve the actual text content using the doc_id
-					text_content = vector_store_manager.metadata.get(doc_id)
-					if text_content:
-						retrieved_texts.append(f"Document ID {doc_id} (Score: {score:.4f}):\n{text_content}")
+				for doc_id, score, filename in final_results: # Iterate through prioritized results
+					# Retrieve the actual text content from metadata
+					metadata_entry = vector_store_manager.metadata.get(doc_id)
+					if metadata_entry and 'text' in metadata_entry:
+						text_content = metadata_entry['text']
+						retrieved_texts.append(f"--- File: {filename} (Score: {score:.4f}) ---\n{text_content}")
 				
 				if retrieved_texts:
 					formatted_rag_context = "\n\n---\n\n".join(retrieved_texts)
@@ -100,7 +139,7 @@ def render_chatarea() -> None:
 					st.session_state.rag_context = retrieved_texts # Store for potential future display/debug if needed
 					st.success("RAG context found and added to prompt.")
 				else:
-					st.warning("No relevant RAG context found for your query.")
+					st.warning("No relevant RAG context found for your query after prioritization.")
 					context_for_llm = None # Ensure it's None if no relevant context
 			else:
 				st.warning("No RAG index available or no results found. Using raw uploaded content if available.")
@@ -154,9 +193,9 @@ def render_chatarea() -> None:
 				extra_body = {"reasoning_effort": st.session_state.reasoning_effort, **params}
 				
 				if not default_config.USE_STREAM:
-					response = ollama_client.get_ollama_response(default_config.MODEL_NAME, prompt, extra_body=extra_body)
+					response = ollama_client.get_ollama_response(default_config.MODEL_NAME, user_input, extra_body=extra_body)
 					st.write(response)
-					st.session_state.chat_history.append(AIMessage(content=response))
+					#st.session_state.chat_history.append(AIMessage(content=response))
 				else:
 					response_placeholder = st.empty()
 					full_text = ""
