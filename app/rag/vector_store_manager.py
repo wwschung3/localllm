@@ -142,6 +142,37 @@ class VectorStoreManager:
             results.append((int(idx), float(dist)))
         return results
 
+    # ------------------------------------------------------------------
+    # 5. 清除索引
+    # ------------------------------------------------------------------
+    def clear_index(self) -> None:
+        """
+        清除現有的 FAISS 索引和 metadata，並刪除磁碟上的檔案。
+        """
+        if self.index is not None:
+            self.index.reset()  # Reset the FAISS index
+            self.index = None
+            print("[向量庫] 索引已重置。")
+        else:
+            print("[向量庫] 索引尚未初始化，無需重置。")
+
+        self.metadata = {}  # Clear the in-memory metadata
+        print("[metadata] metadata 已清除。")
+
+        # 刪除磁碟上的索引檔案
+        if self.index_path.exists():
+            os.remove(self.index_path)
+            print(f"[檔案] 已刪除索引檔案：{self.index_path}")
+        else:
+            print(f"[檔案] 索引檔案不存在：{self.index_path}")
+
+        # 刪除磁碟上的 metadata 檔案
+        if self.metadata_path.exists():
+            os.remove(self.metadata_path)
+            print(f"[檔案] 已刪除 metadata 檔案：{self.metadata_path}")
+        else:
+            print(f"[檔案] metadata 檔案不存在：{self.metadata_path}")
+
 
 # 單例實例（供其他模組直接 import）
 vector_store_manager = VectorStoreManager()

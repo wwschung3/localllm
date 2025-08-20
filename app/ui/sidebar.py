@@ -5,33 +5,40 @@ import json
 import streamlit.components.v1 as components
 from rag.embedding_model import embedding_model
 from rag.vector_store_manager import vector_store_manager
+# Assuming a simple text chunking strategy for demonstration
+from langchain.text_splitter import RecursiveCharacterTextSplitter 
+import tqdm # Added import for tqdm
+
 
 def process_uploaded_files(uploaded_files):
 	"""Processes uploaded text files, calculates token counts, and updates session state.
-	If token count exceeds 2000, it processes them with RAG."""
+	If total token count exceeds a threshold, it processes them with RAG."""
 	if not uploaded_files:
 		st.session_state.uploaded_file_data = []
 		st.session_state.file_token_counts = {}
+		st.session_state.rag_context = [] # Clear RAG context
 		vector_store_manager.clear_index() # Clear RAG index if no files are uploaded
 		return
 
 	st.session_state.uploaded_file_data = []
 	st.session_state.file_token_counts = {}
+	st.session_state.rag_context = [] # Reset RAG context for new uploads
 	
 	# Initialize RAG components
 	embedding_model.load()
-	vector_store_manager.init_vector_store(dim=embedding_model.model.get_sentence_embedding_dimension()) # Use model's dimension
+	# Ensure vector store is initialized with the correct dimension
+	vector_store_manager.init_vector_store(dim=embedding_model.model.get_sentence_embedding_dimension())
 
 	doc_id_counter = 0 # Unique ID for each chunk
 
+	all_uploaded_content = ""
 	for uploaded_file in uploaded_files:
 		try:
 			file_content = None
-			encodings_to_try = ['utf-8', 'big5', 'gbk', 'gb2312', 'latin-1']
+			encodings_to_try = ['utf-8', 'gbk', 'gb2312', 'big5', 'latin-1']
 
 			for encoding in encodings_to_try:
 				try:
-					# Move the file pointer back to the beginning before each decode attempt
 					uploaded_file.seek(0)
 					file_content = uploaded_file.read().decode(encoding)
 					break  # Exit the loop if decoding is successful
@@ -39,38 +46,75 @@ def process_uploaded_files(uploaded_files):
 					continue  # Try the next encoding
 
 			if file_content is not None:
-				# Use file_content here
-				st.success("File decoded successfully!")
+				tokens = st.session_state.token_encoder.encode(file_content)
+				token_count = len(tokens)
+
+				st.session_state.uploaded_file_data.append((uploaded_file.name, file_content))
+				st.session_state.file_token_counts[uploaded_file.name] = token_count
+				all_uploaded_content += file_content + "\n\n" # Accumulate content for total count and potential RAG processing
+				st.success(f"File '{uploaded_file.name}' uploaded successfully! Tokens: **{token_count}**")
 			else:
-				st.error("Could not decode the file. The encoding may be unsupported.")
-			tokens = st.session_state.token_encoder.encode(file_content)
-			token_count = len(tokens)
-
-			st.session_state.uploaded_file_data.append((uploaded_file.name, file_content))
-			st.session_state.file_token_counts[uploaded_file.name] = token_count
-
-			st.success(f"File '{uploaded_file.name}' uploaded successfully! Tokens: **{token_count}**")
-
-			total_token_count = sum(st.session_state.file_token_counts.values())
-
-			# If token count exceeds 1500, process with RAG
-			if total_token_count > 1500:
-				st.info(f"File '{uploaded_file.name}' is large ({token_count} tokens). Processing for RAG...")
-				# For simplicity, we'll treat the entire file as one chunk for now
-				# In a real-world scenario, you'd chunk this file into smaller pieces
-				# and add each chunk to the vector store.
-				
-				# Embed the content
-				vector = embedding_model.embed_text(file_content)
-				
-				# Add to vector store
-				vector_store_manager.add_document(doc_id_counter, vector, file_content)
-				doc_id_counter += 1 # Increment for the next chunk/file
-				vector_store_manager.save_metadata() # Save metadata after adding document
-				st.success(f"File '{uploaded_file.name}' processed for RAG.")
-
+				st.error(f"Could not decode file '{uploaded_file.name}'. The encoding may be unsupported.")
 		except Exception as e:
 			st.error(f"Error reading file '{uploaded_file.name}': {e}")
+
+	total_token_count = sum(st.session_state.file_token_counts.values())
+
+	# Define a threshold for RAG processing
+	RAG_THRESHOLD = 1500 # You can adjust this value
+
+	if total_token_count > RAG_THRESHOLD:
+		st.warning(f"Total tokens ({total_token_count}) exceed the RAG threshold ({RAG_THRESHOLD}). Processing files with RAG...")
+		
+		# Initialize text splitter for chunking
+		# Adjust chunk_size and chunk_overlap based on your needs and model's context window
+		text_splitter = RecursiveCharacterTextSplitter(
+			chunk_size=500,  # Smaller chunks for more precise retrieval
+			chunk_overlap=100,
+			length_function=len, # Use character length for splitting
+		)
+		
+		# Chunk the combined content of all uploaded files
+		chunks = text_splitter.split_text(all_uploaded_content)
+		
+		st.info(f"Splitting content into {len(chunks)} chunks for RAG...")
+
+		retrieved_chunks_texts = []
+		# For demonstration, we'll embed and add all chunks to the vector store
+		# In a real RAG flow, you'd then use a query to search these chunks.
+		# For now, we'll assume the most recent user query (from chat_area) will trigger the search.
+		# For simplicity, we'll add all chunks to the vector store here.
+		# The actual retrieval based on user's query will happen in chat_area or a separate function.
+
+		# For the initial RAG context to pass to the LLM right after upload,
+		# we'll just take the first few chunks or a summary.
+		# A better RAG implementation would trigger a search *after* the user types their query.
+		# For now, let's simply store all chunks in the vector store and prepare for search later.
+		
+		for i, chunk in enumerate(tqdm.tqdm(chunks, desc="Embedding chunks")):
+			# Embed the content
+			vector = embedding_model.embed_text(chunk)
+			
+			# Add to vector store
+			vector_store_manager.add_document(doc_id_counter, vector, chunk)
+			doc_id_counter += 1
+		
+		vector_store_manager.save_metadata()
+		st.success(f"All {len(chunks)} chunks processed and added to vector store for RAG.")
+
+		# For immediate RAG context for the *next* LLM call, we would need to run a search.
+		# Since the user hasn't typed a query yet, we can't do a context-aware search.
+		# This part of the logic needs to be tied to the actual user query.
+		# Let's adjust sidebar.py to only *prepare* the vector store,
+		# and chat_area.py will be responsible for *searching* the vector store
+		# based on the user's *new* query.
+		st.session_state.rag_enabled = True # Indicate that RAG is active
+		st.session_state.rag_context = [] # Initialize empty, will be filled on query
+
+	else:
+		st.info(f"Total tokens ({total_token_count}) are within the limit ({RAG_THRESHOLD}). No RAG needed for initial processing.")
+		st.session_state.rag_enabled = False # Indicate RAG is not active
+		st.session_state.rag_context = [] # Ensure RAG context is empty
 
 	
 def render_sidebar():
@@ -82,6 +126,12 @@ def render_sidebar():
 	# Initialize token encoder in session state if it doesn't exist
 	if "token_encoder" not in st.session_state:
 		st.session_state.token_encoder = tiktoken.get_encoding("cl100k_base")
+
+	# Initialize rag_context and rag_enabled if not present
+	if "rag_context" not in st.session_state:
+		st.session_state.rag_context = []
+	if "rag_enabled" not in st.session_state:
+		st.session_state.rag_enabled = False
 
 	# The file uploader widget
 	uploaded_files = st.file_uploader(
@@ -182,6 +232,8 @@ def render_sidebar():
 			st.session_state.chat_history = []
 			st.session_state.current_conversation_title = None
 			st.session_state.uploaded_file_data = []
+			st.session_state.rag_context = [] # Clear RAG context on new chat
+			st.session_state.rag_enabled = False # Disable RAG on new chat
 			vector_store_manager.clear_index() # Clear RAG index on new chat
 			st.rerun()
 
@@ -223,6 +275,8 @@ def render_sidebar():
 			st.session_state.chat_history = []
 			st.session_state.current_conversation_title = None
 			st.session_state.uploaded_file_data = []
+			st.session_state.rag_context = [] # Clear RAG context on clearing all conversations
+			st.session_state.rag_enabled = False # Disable RAG on clearing all conversations
 			vector_store_manager.clear_index() # Clear RAG index on clearing all conversations
 			persistence.save_conversations()
 			st.toast("All conversations cleared!")

@@ -1,7 +1,7 @@
 import streamlit as st
 import json
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from utils import persistence, ollama_client, prompt_builder # Added prompt_builder
+from utils import persistence, ollama_client, prompt_builder
 import config as default_config
 import pyperclip
 
@@ -70,10 +70,19 @@ def render_chatarea() -> None:
 
 	user_input = st.chat_input("You:")
 	if user_input:
-		# Combine user input and uploaded file content, if any
+		# Combine user input and relevant context (either RAG or raw file content)
 		combined_input = user_input
-		# Check if uploaded_file_data is a list of tuples and not empty
-		if "uploaded_file_data" in st.session_state and st.session_state.uploaded_file_data:
+		
+		# Check if RAG context exists and is not empty
+		if "rag_context" in st.session_state and st.session_state.rag_context:
+			# If RAG was triggered, use the retrieved context
+			# This context should already be summarized or chunked appropriately
+			formatted_rag_context = "\n\n".join(st.session_state.rag_context)
+			combined_input += "\n\n[Relevant Context from Uploaded Files]:\n" + formatted_rag_context
+			st.session_state.rag_context = [] # Clear RAG context after use
+		elif "uploaded_file_data" in st.session_state and st.session_state.uploaded_file_data:
+			# If no RAG context (meaning total tokens were below threshold),
+			# use the raw uploaded file contents directly.
 			formatted_file_contents = []
 			for file_name, file_content in st.session_state.uploaded_file_data:
 				formatted_file_contents.append(f"--- File: {file_name} ---\n{file_content}")
@@ -81,24 +90,30 @@ def render_chatarea() -> None:
 			all_file_contents = "\n\n".join(formatted_file_contents)
 			combined_input += "\n\n[Uploaded File Contents]:\n" + all_file_contents
 
+
 		st.chat_message("user").write(combined_input)
 		st.session_state.chat_history.append(HumanMessage(content=combined_input))
 		new_idx = _get_unique_id() - 1  # the index of the just‑added message
 		_copy_button(combined_input, new_idx)
 
-		# Clear the uploaded file data after use
+		# Clear the uploaded file data after use, regardless of RAG
 		st.session_state.uploaded_file_data = []
 		st.session_state.file_uploader_id = st.session_state.file_uploader_id + 1
 
 		with st.chat_message("assistant"):
 			with st.spinner("思考中…"):
 				# Construct prompt using the new prompt_builder module
+				# Pass rag_context to prompt_builder if available
 				prompt = prompt_builder.build_prompt(
 					st.session_state.system_prompt,
 					st.session_state.selected_language,
 					st.session_state.show_cot,
 					st.session_state.reasoning_effort,
-					st.session_state.chat_history
+					st.session_state.chat_history,
+					# If RAG was triggered, send the original user input to the LLM,
+					# and the rag_context will be added in prompt_builder's system message.
+					# Otherwise, the combined_input already includes the raw file content.
+					rag_context=formatted_rag_context if "rag_context" in st.session_state and st.session_state.rag_context else None
 				)
 
 				PARAMS_BY_EFFORT = {
@@ -123,4 +138,3 @@ def render_chatarea() -> None:
 				
 				if st.session_state.auto_save:
 					persistence.save_current_conversation()
-
